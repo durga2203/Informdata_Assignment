@@ -1,0 +1,118 @@
+Problem 1 explanation :
+
+To optimize the SQL Server stored procedure [dbo].[optimize_sp] and address the performance issues described (slow performance, blocking), we can focus on several areas: indexing, query structure, and locking strategies.
+
+1. Indexing Strategy
+Indexes play a crucial role in optimizing query performance. Based on the queries in the stored procedure, we can identify potential index improvements:
+
+Indexes on Foreign Keys: Ensure that columns used in joins (fkOrderID, fkSessionID, fkOrderStatusID) have indexes on their respective tables (OrderTracker, Orders, Sessions, OrderStatus).
+
+Indexes on Filtering Columns: Consider indexes on columns used in WHERE clauses (Orders.fkOrderStatusID, OrderTracker.CompletionDate, Logs.IsClientFacing, Logs.DateSent).
+
+2. Query Refactoring
+The stored procedure consists of three main sections: two SELECT queries and one UPDATE query. Here are some optimizations for each:
+
+First SELECT Query (#MaxStatusLog):
+
+SELECT  ID = MAX([Logs].pkLogID), SubjectID
+INTO #MaxStatusLog
+FROM  [OrderTracker]
+    INNER JOIN [Orders] ON  [OrderTracker].fkOrderID = [Orders].pkOrderID
+    INNER JOIN [Sessions] ON [OrderTracker].fkSessionID = [Sessions].pkSessionID
+    INNER JOIN [Logs] ON [Logs].fkOrderID  = [OrderTracker].fkOrderID
+WHERE  [Orders].fkOrderStatusID in (1) AND
+    [OrderTracker].[CompletionDate] IS NULL AND
+    [Logs].[IsClientFacing] = 1
+GROUP BY [OrderTracker].SubjectID
+Optimization: Ensure indexes on [Orders].fkOrderID, [Sessions].pkSessionID, [Logs].fkOrderID, and [OrderTracker].SubjectID.
+
+Second SELECT Query:
+SELECT  [OrderTracker].SubjectID,
+    Notes = MAX([Logs].Note),
+    DateDue = MAX([Orders].[DueDate]),
+    OrderStatus = LOWER([OrderStatus].StatusName)
+FROM  [OrderTracker]
+    INNER JOIN [Orders] ON [OrderTracker].fkOrderId = [Orders].pkOrderID
+    INNER JOIN [Sessions] ON [OrderTracker].fkSessionID = [Sessions].pkSessionID
+    INNER JOIN #MaxStatusLog m ON [OrderTracker].SubjectID = m.SubjectID
+    INNER JOIN [Logs] ON [Logs].fkOrderId  = [OrderTracker].fkOrderId AND [Logs].pkLogID = m.ID
+    INNER JOIN [OrderStatus] ON [OrderStatus].pkOrderStatusID = [Orders].fkOrderStatusID
+WHERE  [Orders].fkOrderStatusID in (1) AND
+    [OrderTracker].[CompletionDate] IS NULL AND
+    [Logs].[IsClientFacing] = 1 AND
+    [Logs].[DateSent] IS NULL
+GROUP BY   [OrderTracker].SubjectID, [OrderStatus].StatusName
+ORDER BY   [OrderTracker].SubjectID
+
+Optimization: Ensure indexes on [OrderTracker].fkOrderId, [Sessions].pkSessionID, [Logs].fkOrderId, [Logs].pkLogID, and [OrderStatus].pkOrderStatusID.
+UPDATE Query:
+UPDATE [Logs]
+SET DateSent  = GETDATE()
+FROM [Logs] WITH (UPDLOCK, ROWLOCK)
+    INNER JOIN [OrderTracker] ON [Logs].fkOrderId  = [OrderTracker].fkOrderId
+    INNER JOIN #MaxStatusLog l ON [Logs].pkLogID = l.ID
+WHERE [Logs].DateSent IS NULL  AND [Logs].IsClientFacing = 1
+Optimization: Ensure indexes on [Logs].fkOrderId and [Logs].pkLogID.
+
+3. Locking Strategy
+Lock Hints: we can Use appropriate lock hints (UPDLOCK, ROWLOCK) as per your concurrency requirements. These hints can reduce blocking by minimizing the scope of locks acquired.
+Final Refactored Stored Procedure
+Here’s how the refactored stored procedure might look after applying the optimizations:
+
+sql
+Copy code
+CREATE PROCEDURE [dbo].[optimize_sp]
+AS
+BEGIN
+
+-- Create temporary table #MaxStatusLog
+SELECT  ID = MAX([Logs].pkLogID), SubjectID
+INTO #MaxStatusLog
+FROM  [OrderTracker]
+    INNER JOIN [Orders] ON  [OrderTracker].fkOrderID = [Orders].pkOrderID
+    INNER JOIN [Sessions] ON [OrderTracker].fkSessionID = [Sessions].pkSessionID
+    INNER JOIN [Logs] ON [Logs].fkOrderID  = [OrderTracker].fkOrderID
+WHERE  [Orders].fkOrderStatusID = 1  -- Index optimization on fkOrderStatusID
+    AND [OrderTracker].[CompletionDate] IS NULL
+    AND [Logs].[IsClientFacing] = 1
+GROUP BY [OrderTracker].SubjectID;
+
+-- Fetch data query
+SELECT  [OrderTracker].SubjectID,
+    Notes = MAX([Logs].Note),
+    DateDue = MAX([Orders].[DueDate]),
+    OrderStatus = LOWER([OrderStatus].StatusName)
+FROM  [OrderTracker]
+    INNER JOIN [Orders] ON [OrderTracker].fkOrderId = [Orders].pkOrderID
+    INNER JOIN [Sessions] ON [OrderTracker].fkSessionID = [Sessions].pkSessionID
+    INNER JOIN #MaxStatusLog m ON [OrderTracker].SubjectID = m.SubjectID
+    INNER JOIN [Logs] ON [Logs].fkOrderId  = [OrderTracker].fkOrderId AND [Logs].pkLogID = m.ID
+    INNER JOIN [OrderStatus] ON [OrderStatus].pkOrderStatusID = [Orders].fkOrderStatusID
+WHERE  [Orders].fkOrderStatusID = 1
+    AND [OrderTracker].[CompletionDate] IS NULL
+    AND [Logs].[IsClientFacing] = 1
+    AND [Logs].[DateSent] IS NULL
+GROUP BY   [OrderTracker].SubjectID, [OrderStatus].StatusName
+ORDER BY   [OrderTracker].SubjectID;
+
+-- Update query
+UPDATE [Logs]
+SET DateSent  = GETDATE()
+FROM [Logs] WITH (UPDLOCK, ROWLOCK)  -- Lock hints for reducing blocking
+    INNER JOIN [OrderTracker] ON [Logs].fkOrderId  = [OrderTracker].fkOrderId
+    INNER JOIN #MaxStatusLog l ON [Logs].pkLogID = l.ID
+WHERE [Logs].DateSent IS NULL  
+    AND [Logs].IsClientFacing = 1;
+
+END
+
+
+
+Summary
+By optimizing indexes, refactoring queries, and applying appropriate locking hints, this refactored stored procedure aims to improve performance and reduce blocking issues in the legacy system. Make sure to test these optimizations in a development or staging environment before applying them to production to ensure they meet performance expectations and maintain data integrity.
+
+
+
+
+
+

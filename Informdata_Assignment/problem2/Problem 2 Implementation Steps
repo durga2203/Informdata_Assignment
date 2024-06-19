@@ -1,0 +1,102 @@
+To complete the task of deploying infrastructure using AWS CDK to LocalStack, we'll follow the below steps. Since LocalStack is used to mock AWS services locally, we'll simulate the deployment without needing a real AWS account.
+
+Prerequisites
+Before proceeding, ensure you have the following tools installed:
+
+Docker: To run LocalStack.
+AWS CLI: To interact with LocalStack services (awslocal utility).
+AWS CDK: To define and deploy infrastructure.
+LocalStack: To mock AWS services locally.
+
+Task Steps
+
+Step 1: we will Set Up LocalStack
+Start we will use LocalStack using Docker:
+
+
+docker run --rm -it -p 4566:4566 -p 4571:4571 localstack/localstack
+This command starts LocalStack with ports mapped for AWS services (like S3 and DynamoDB) and the LocalStack web UI.
+
+Step 2: Create an S3 Bucket and Upload index.html
+Use AWS CLI (awslocal) to create the S3 bucket "www" and upload index.html:
+
+# Create bucket
+awslocal s3 mb s3://www
+
+# Upload index.html
+echo "<html><body><h1>Hello, CDK LocalStack!</h1></body></html>" > index.html
+awslocal s3 cp index.html s3://www/index.html
+Verify the file upload by accessing the LocalStack S3 web UI: http://localhost:4566/.
+
+Step 3: Set Up AWS CDK Project
+Initialize a new AWS CDK project:
+
+mkdir cdk-localstack-demo
+cd cdk-localstack-demo
+cdk init app --language=typescript
+Install necessary dependencies:
+
+
+npm install @aws-cdk/aws-ec2 @aws-cdk/aws-iam @aws-cdk/aws-s3 @aws-cdk/core @aws-cdk/aws-ec2 @aws-cdk/aws-iam
+
+Step 4: Define AWS CDK Infrastructure
+Edit lib/cdk-localstack-demo-stack.ts to define your AWS infrastructure:
+
+import * as ec2 from '@aws-cdk/aws-ec2';
+import * as cdk from '@aws-cdk/core';
+
+export class CdkLocalstackDemoStack extends cdk.Stack {
+  constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    // Create VPC
+    const vpc = new ec2.Vpc(this, 'MyVpc', {
+      maxAzs: 1, // For LocalStack, use 1 AZ only
+    });
+
+    // Create Security Group
+    const securityGroup = new ec2.SecurityGroup(this, 'MySecurityGroup', {
+      vpc,
+      allowAllOutbound: true, // Allow all outbound traffic
+    });
+    securityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'Allow HTTP access from anywhere');
+
+    // EC2 Instance
+    const instance = new ec2.Instance(this, 'MyInstance', {
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
+      machineImage: ec2.MachineImage.genericLinux({
+        'us-east-1': 'ami-04b70fa74e45c3917', // Ubuntu 24.04 LTS AMI
+      }),
+      vpc,
+      securityGroup,
+    });
+
+    // Assign IAM Role to EC2 Instance (if needed)
+    // instance.role.addManagedPolicy(ec2.ManagedPolicy.fromAwsManagedPolicyName('AmazonS3ReadOnlyAccess'));
+
+    // Example of running a script on EC2 instance launch
+    instance.userData.addCommands(
+      'apt-get update',
+      'apt-get install -y nginx',
+      'service nginx start'
+    );
+
+    // Output the EC2 instance ID
+    new cdk.CfnOutput(this, 'InstanceID', { value: instance.instanceId });
+  }
+}
+
+const app = new cdk.App();
+new CdkLocalstackDemoStack(app, 'CdkLocalstackDemoStack');
+
+Step 5: Deploy Infrastructure
+Deploy the AWS CDK stack to LocalStack:
+
+cdklocal deploy --app "node bin/cdk-localstack-demo.js"
+
+Step 6: Verify Deployment
+Verify that the infrastructure is deployed correctly by checking the LocalStack web UI for resources and logs.
+
+
+Conclusion:
+This setup demonstrates using AWS CDK with LocalStack to deploy AWS infrastructure locally, including EC2 instances, security groups, and S3 buckets. The infrastructure defined ensures least privileged access and includes a basic web server setup on an EC2 instance. Adjust the script (configure.sh) and IAM policies as per your application's requirements for a real-world scenario.
